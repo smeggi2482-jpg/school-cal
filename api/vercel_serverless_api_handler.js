@@ -1,0 +1,151 @@
+/**
+ * Vercel Serverless Function: api/generate.js
+ * 
+ * 보안 주의사항: GEMINI_API_KEY는 Vercel 환경변수(Environment Variables)에 등록되어야 합니다.
+ * 클라이언트 단으로 키가 유출되지 않고 서버 단에서만 Gemini API를 안전하게 호출합니다.
+ */
+
+export default async function handler(req, res) {
+    // CORS 헤더 설정
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'POST 요청만 지원합니다.' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        return res.status(500).json({ 
+            error: '서버에 GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Vercel 대시보드에서 환경변수를 설정해주세요.' 
+        });
+    }
+
+    try {
+        const { imageBase64, mimeType = 'image/jpeg', schoolInfo } = req.body;
+
+        if (!imageBase64) {
+            return res.status(400).json({ error: '분석할 이미지 데이터(imageBase64)가 필요합니다.' });
+        }
+
+        const systemInstruction = `당신은 학교 급식 및 음식 영양 분석을 전문으로 하는 국가 인증 AI 최고 영양사입니다.
+제공된 식단/급식 사진을 정밀하게 분석하여 각 음식 메뉴별 상세 정보와 전체 칼로리, 3대 영양소(탄수화물, 단백질, 지방) 및 나트륨/당류 수치를 추정하세요.
+학교 급식 영양 기준 및 교육부/식약처 영양 권장량을 바탕으로 식단의 영양 균형 점수(100점 만점)와 영양사 AI 특급 피드백을 제공합니다.`;
+
+        const userPrompt = `이 사진은 급식 또는 음식 사진입니다.
+${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
+사진에 나온 음식들을 식별하고 영양 성분을 분석하여 정의된 JSON 형식으로만 정확히 응답해주세요.`;
+
+        const payload = {
+            contents: [
+                {
+                    role: "user",
+                    parts: [
+                        { text: userPrompt },
+                        {
+                            inlineData: {
+                                mimeType: mimeType,
+                                data: imageBase64.replace(/^data:image\/\w+;base64,/, '')
+                            }
+                        }
+                    ]
+                }
+            ],
+            systemInstruction: {
+                parts: [{ text: systemInstruction }]
+            },
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                        mealTitle: { type: "STRING", description: "식단 한 줄 요약 메인 이름 (예: 매콤 제육볶음과 찰보리밥 급식)" },
+                        totalCalories: { type: "NUMBER", description: "총 예상 칼로리 (kcal)" },
+                        nutritionScore: { type: "NUMBER", description: "영양 균형 점수 (0~100)" },
+                        macronutrients: {
+                            type: "OBJECT",
+                            properties: {
+                                carbs: { type: "NUMBER", description: "탄수화물 (g)" },
+                                protein: { type: "NUMBER", description: "단백질 (g)" },
+                                fat: { type: "NUMBER", description: "지방 (g)" },
+                                sodium: { type: "NUMBER", description: "나트륨 (mg)" },
+                                sugar: { type: "NUMBER", description: "당류 (g)" }
+                            },
+                            required: ["carbs", "protein", "fat", "sodium", "sugar"]
+                        },
+                        items: {
+                            type: "ARRAY",
+                            items: {
+                                type: "OBJECT",
+                                properties: {
+                                    name: { type: "STRING", description: "음식/메뉴 이름" },
+                                    portion: { type: "STRING", description: "추정 1회 제공량 (예: 1공기, 150g, 1대)" },
+                                    calories: { type: "NUMBER", description: "해당 음식 칼로리 (kcal)" },
+                                    category: { type: "STRING", description: "분류 (주식, 국/찌개, 메인반찬, 찬류, 후식 등)" }
+                                },
+                                required: ["name", "portion", "calories", "category"]
+                            }
+                        },
+                        aiFeedback: {
+                            type: "OBJECT",
+                            properties: {
+                                summary: { type: "STRING", description: "영양 총평 및 잘된 점" },
+                                warning: { type: "STRING", description: "주의점 및 섭취 팁 (예: 나트륨 과다 주의, 단백질 보충 권장 등)" },
+                                healthTip: { type: "STRING", description: "학생/사용자를 위한 맞춤 건강 조언" }
+                            },
+                            required: ["summary", "warning", "healthTip"]
+                        }
+                    },
+                    required: ["mealTitle", "totalCalories", "nutritionScore", "macronutrients", "items", "aiFeedback"]
+                }
+            }
+        };
+
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Gemini API Error:', errorText);
+            return res.status(response.status).json({ 
+                error: `Gemini API 호출 오류가 발생했습니다. (${response.status})` 
+            });
+        }
+
+        const data = await response.json();
+        const rawJsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (!rawJsonText) {
+            return res.status(500).json({ error: 'AI 분석 응답 결과를 받아오지 못했습니다.' });
+        }
+
+        const parsedResult = JSON.parse(rawJsonText);
+        return res.status(200).json({
+            success: true,
+            data: parsedResult
+        });
+
+    } catch (error) {
+        console.error('Server Error:', error);
+        return res.status(500).json({ 
+            error: error.message || '서버 내부 처리 중 오류가 발생했습니다.' 
+        });
+    }
+}
