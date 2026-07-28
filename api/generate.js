@@ -120,11 +120,12 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
             }
         };
 
-        // 다중 모델 후보 목록 (안정적인 gemini-2.0-flash, gemini-1.5-flash 순차 폴백)
+        // 지원 종료/미지원 모델(gemini-2.5-flash)을 제거하고 현재 정식 호환되는 모델로 업데이트
         const candidateModels = [
-            'gemini-2.0-flash',
             'gemini-1.5-flash',
-            'gemini-2.5-flash'
+            'gemini-1.5-flash-latest',
+            'gemini-1.5-pro',
+            'gemini-2.0-flash-exp'
         ];
 
         let geminiRes = null;
@@ -152,7 +153,6 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
                 if (geminiRes.status === 401 || geminiRes.status === 403) {
                     break;
                 }
-                // 그 외 400, 404 등 모델 경로 오류 시 다음 모델로 순차 시도
             } catch (err) {
                 lastErrorText = err.message;
             }
@@ -161,10 +161,10 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
         if (!geminiRes || !geminiRes.ok) {
             console.error('Gemini API Error Response:', lastErrorText);
             
-            if (geminiRes?.status === 400 || geminiRes?.status === 403 || geminiRes?.status === 401) {
+            if (geminiRes?.status === 401 || geminiRes?.status === 403) {
                 return res.status(geminiRes.status).json({
                     success: false,
-                    error: `Gemini API 인증/호출 오류 (${geminiRes.status}): Vercel 환경변수 GEMINI_API_KEY가 유효한지 확인해 주세요.`
+                    error: `Gemini API 인증 오류 (${geminiRes.status}): Vercel 환경변수 GEMINI_API_KEY가 유효한지 확인해 주세요.`
                 });
             }
 
@@ -181,7 +181,19 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
             return res.status(500).json({ success: false, error: 'AI 식단 분석 응답 결과를 생성하지 못했습니다.' });
         }
 
-        const parsedResult = JSON.parse(rawJsonText);
+        // 백틱 및 마크다운 코드블록 정밀 제거 후 안전한 JSON 파싱
+        let parsedResult;
+        try {
+            const cleanJsonText = rawJsonText.replace(/```json/gi, '').replace(/```/g, '').trim();
+            parsedResult = JSON.parse(cleanJsonText);
+        } catch (parseErr) {
+            const jsonMatch = rawJsonText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                parsedResult = JSON.parse(jsonMatch[0]);
+            } else {
+                throw new Error('AI 응답 데이터를 규격화된 식단 정보로 파싱하지 못했습니다.');
+            }
+        }
 
         return res.status(200).json({
             success: true,
