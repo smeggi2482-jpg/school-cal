@@ -2,7 +2,7 @@
  * Vercel Serverless Function: api/generate.js
  * 
  * Vercel 및 Node.js 서버리스 환경 호환 handler.
- * 최신 Gemini API 모델 지원 및 모델 미지원 시 자동 폴백(Fallback) 탑재.
+ * 최신 Gemini API 정식 모델 지원 및 자동 폴백(Fallback) 탑재.
  */
 
 const config = {
@@ -63,11 +63,10 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
   "aiFeedback": { "summary": "총평", "warning": "주의점", "healthTip": "건강팁" }
 }`;
 
-        // 백엔드 호환 가능한 최신 정규 Gemini 모델 리스트 (실험용 -exp 모델 제외)
+        // 정식 호환 모델 리스트 (존재하지 않거나 지원 중단된 모델명 완전히 제거)
         const candidateModels = [
-            'gemini-2.5-flash',
-            'gemini-2.0-flash',
             'gemini-1.5-flash',
+            'gemini-2.0-flash',
             'gemini-1.5-pro'
         ];
 
@@ -140,7 +139,7 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
                 });
             }
 
-            const errorDetails = modelAttemptErrors.length > 0 ? modelAttemptErrors[0] : lastErrorText;
+            const errorDetails = modelAttemptErrors.length > 0 ? modelAttemptErrors[modelAttemptErrors.length - 1] : lastErrorText;
             return res.status(geminiRes ? geminiRes.status : 500).json({ 
                 success: false,
                 error: `Gemini API 호출 실패: ${errorDetails || 'Google AI 서버와 통신할 수 없습니다.'}` 
