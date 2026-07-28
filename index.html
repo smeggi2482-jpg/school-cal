@@ -33,7 +33,6 @@
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col antialiased">
 
-    <!-- Header -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div class="max-w-5xl mx-auto px-4 py-3.5 flex items-center justify-between">
             <div class="flex items-center space-x-3">
@@ -54,7 +53,18 @@
         </div>
     </header>
 
-    <!-- Main Body Container -->
+    <div id="toastNotification" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 hidden max-w-lg w-full px-4 transition-all duration-300">
+        <div id="toastBox" class="bg-slate-900 text-white text-xs sm:text-sm font-medium px-4 py-3 rounded-xl shadow-2xl flex items-center justify-between space-x-3 border border-slate-700">
+            <div class="flex items-start space-x-2.5">
+                <i class="fa-solid fa-circle-exclamation text-amber-400 text-lg mt-0.5 flex-shrink-0"></i>
+                <span id="toastMessage" class="leading-snug">오류 메시지가 표시됩니다.</span>
+            </div>
+            <button onclick="hideToast()" class="text-slate-400 hover:text-white p-1 flex-shrink-0">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+    </div>
+
     <main class="flex-grow max-w-5xl w-full mx-auto px-4 py-6 space-y-6">
 
         <!-- Info / Helper Banner -->
@@ -78,7 +88,7 @@
         <!-- Main Workspace Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-            <!-- Left Panel: Image Upload & Capture (5 Cols) -->
+            <!-- Upload Column -->
             <div class="lg:col-span-5 space-y-4">
                 <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm flex flex-col h-full">
                     <h3 class="font-bold text-slate-900 text-base mb-3 flex items-center">
@@ -97,10 +107,10 @@
                             </div>
                             <div>
                                 <p class="text-sm font-semibold text-slate-700">사진을 클릭하거나 여기로 드래그하세요</p>
-                                <p class="text-xs text-slate-400 mt-1">JPG, PNG, WEBP 지원 (카메라 촬영 가능)</p>
+                                <p class="text-xs text-slate-400 mt-1">자동 이미지 최적화 적용 (스마트폰 지원)</p>
                             </div>
                             <span class="inline-block px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 shadow-sm">
-                                <i class="fa-solid fa-mobile-screen mr-1 text-slate-400"></i> 스마트폰 바로 촬영 가능
+                                <i class="fa-solid fa-compress mr-1 text-emerald-500"></i> 스마트폰 고화질 압축 자동화
                             </span>
                         </div>
 
@@ -127,7 +137,6 @@
                 </div>
             </div>
 
-            <!-- Right Panel: Analysis Results Display (7 Cols) -->
             <div class="lg:col-span-7">
                 
                 <!-- Empty Initial State -->
@@ -137,7 +146,7 @@
                     </div>
                     <h4 class="font-bold text-slate-700 text-base">급식 사진을 올리고 분석을 진행하세요</h4>
                     <p class="text-xs text-slate-400 max-w-xs leading-relaxed">
-                        Gemini 3 Flash Vision AI가 식단의 칼로리, 영양소 분량, 나트륨 비율 및 개별 메뉴 성분을 투명하게 분석합니다.
+                        Gemini Vision AI가 식단의 칼로리, 영양소 분량, 나트륨 비율 및 개별 메뉴 성분을 정밀하게 분석합니다.
                     </p>
                 </div>
 
@@ -239,7 +248,6 @@
 
     </main>
 
-    <!-- School Meal Modal (교육정보 개방 포털 참고용) -->
     <div id="schoolModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
             <div class="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -270,34 +278,77 @@
     </div>
 
     <script>
-        // Application State
         let currentImageBase64 = null;
         let currentMimeType = 'image/jpeg';
         let schoolInfoData = '';
 
-        // Image Handling Logic
-        function handleFileSelect(event) {
+        function showToast(message) {
+            const toast = document.getElementById('toastNotification');
+            const msgSpan = document.getElementById('toastMessage');
+            msgSpan.innerText = message;
+            toast.classList.remove('hidden');
+        }
+
+        function hideToast() {
+            document.getElementById('toastNotification').classList.add('hidden');
+        }
+
+        // 이미지 고해상도 압축 함수 (해상도 800px 최적화)
+        function compressAndProcessImage(file, maxWidth = 800, maxHeight = 800, quality = 0.7) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        let width = img.width;
+                        let height = img.height;
+
+                        if (width > maxWidth || height > maxHeight) {
+                            if (width > height) {
+                                height = Math.round((height * maxWidth) / width);
+                                width = maxWidth;
+                            } else {
+                                width = Math.round((width * maxHeight) / height);
+                                height = maxHeight;
+                            }
+                        }
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+
+                        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+                        resolve(compressedDataUrl);
+                    };
+                    img.onerror = () => reject(new Error('이미지 로딩 실패'));
+                    img.src = e.target.result;
+                };
+                reader.onerror = () => reject(new Error('파일 읽기 실패'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function handleFileSelect(event) {
             const file = event.target.files[0];
             if (!file) return;
 
-            currentMimeType = file.type || 'image/jpeg';
-            const reader = new FileReader();
-
-            reader.onload = function(e) {
-                currentImageBase64 = e.target.result;
+            try {
+                hideToast();
+                currentMimeType = 'image/jpeg';
+                currentImageBase64 = await compressAndProcessImage(file);
                 
-                // UI Updates
                 document.getElementById('imagePreview').src = currentImageBase64;
                 document.getElementById('uploadPlaceholder').classList.add('hidden');
                 document.getElementById('previewContainer').classList.remove('hidden');
 
-                // Enable Analyze Button
                 const analyzeBtn = document.getElementById('analyzeBtn');
                 analyzeBtn.disabled = false;
                 analyzeBtn.className = "mt-4 w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition duration-200 flex items-center justify-center space-x-2 cursor-pointer";
-            };
-
-            reader.readAsDataURL(file);
+            } catch (err) {
+                showToast(err.message || '사진 처리 중 오류가 발생했습니다.');
+            }
         }
 
         function resetImage(e) {
@@ -312,7 +363,6 @@
             analyzeBtn.className = "mt-4 w-full py-3.5 px-4 bg-slate-300 text-slate-500 font-bold rounded-xl shadow transition duration-200 flex items-center justify-center space-x-2 disabled:cursor-not-allowed";
         }
 
-        // Modal Controls
         function openSchoolModal() {
             document.getElementById('schoolModal').classList.remove('hidden');
         }
@@ -340,18 +390,31 @@
             document.getElementById('modalMealHint').value = '';
         }
 
-        // Serverless API Interaction Function
         async function analyzeMealImage() {
             if (!currentImageBase64) return;
+            hideToast();
 
-            // Show Loading State
+            // UI 상태 변경
             document.getElementById('emptyResultState').classList.add('hidden');
             document.getElementById('resultContent').classList.add('hidden');
             document.getElementById('loadingState').classList.remove('hidden');
 
             try {
-                // Call Vercel Serverless Endpoint
-                const response = await fetch('/api/generate', {
+                // Vercel / Sandbox 상대 경로 안전 계산
+                let apiUrl = '/api/generate';
+                try {
+                    const origin = (window.location.origin && window.location.origin !== 'null' && !window.location.origin.startsWith('blob:')) 
+                        ? window.location.origin 
+                        : (window.location.href && window.location.href.startsWith('http') ? window.location.href : null);
+                    if (origin) {
+                        apiUrl = new URL('/api/generate', origin).href;
+                    }
+                } catch (e) {
+                    console.warn('URL parsing fallback:', e);
+                }
+
+                // Vercel Serverless Function 호출
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -363,23 +426,44 @@
                     })
                 });
 
-                const resData = await response.json();
+                // 안전한 HTML/JSON 구분 처리
+                const contentType = response.headers.get('content-type') || '';
+                const rawText = await response.text();
+                let resData = null;
+
+                if (contentType.includes('application/json')) {
+                    try {
+                        resData = JSON.parse(rawText);
+                    } catch (e) {
+                        console.error('JSON Parse error:', e);
+                    }
+                }
+
+                // 서버에서 JSON이 아닌 HTML 에러 페이지를 리턴한 경우 (e.g. 500, 404)
+                if (!resData) {
+                    if (response.status === 404) {
+                        throw new Error('서버리스 API 경로를 찾을 수 없습니다 (api/generate.js 파일의 Vercel 배포 상태를 확인하세요).');
+                    } else if (response.status === 413) {
+                        throw new Error('사진 용량이 서버 수신 범위를 초과했습니다. 더 작은 해상도로 시도해 주세요.');
+                    } else {
+                        throw new Error(`Vercel 서버 오류 (상태 코드: ${response.status}). Vercel 프로젝트 설정의 GEMINI_API_KEY 환경변수가 정상 등록되어 있는지 확인해주세요.`);
+                    }
+                }
 
                 if (!response.ok || !resData.success) {
-                    throw new Error(resData.error || '음식 분석 중 오류가 발생했습니다.');
+                    throw new Error(resData.error || '식단 분석 처리 중 오류가 발생했습니다.');
                 }
 
                 renderResults(resData.data);
 
             } catch (error) {
-                alert('에러 발생: ' + error.message);
+                showToast(error.message || '분석 중 문제가 발생했습니다.');
                 document.getElementById('emptyResultState').classList.remove('hidden');
             } finally {
                 document.getElementById('loadingState').classList.add('hidden');
             }
         }
 
-        // Render Results to UI
         function renderResults(data) {
             document.getElementById('resMealTitle').innerText = data.mealTitle || '급식 영양 분석 결과';
             document.getElementById('resScore').innerText = `${data.nutritionScore || 80}점`;
