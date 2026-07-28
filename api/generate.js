@@ -53,9 +53,30 @@ async function handler(req, res) {
 
         const userPrompt = `이 사진은 급식 또는 음식 사진입니다.
 ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
-사진에 나온 음식들을 식별하고 영양 성분을 분석하여 정의된 JSON 형식으로만 정확히 응답해주세요.`;
+사진에 나온 음식들을 식별하고 영양 성분을 분석하여 다음 JSON 구조로 응답하세요:
+{
+  "mealTitle": "식단 한 줄 요약",
+  "totalCalories": 숫자(kcal),
+  "nutritionScore": 숫자(0~100),
+  "macronutrients": { "carbs": 숫자(g), "protein": 숫자(g), "fat": 숫자(g), "sodium": 숫자(mg), "sugar": 숫자(g) },
+  "items": [ { "name": "음식명", "portion": "제공량", "calories": 숫자, "category": "분류" } ],
+  "aiFeedback": { "summary": "총평", "warning": "주의점", "healthTip": "건강팁" }
+}`;
 
-        const payload = {
+        // 백엔드 호환 가능한 최신 정규 Gemini 모델 리스트 (실험용 -exp 모델 제외)
+        const candidateModels = [
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro'
+        ];
+
+        let geminiRes = null;
+        let lastErrorText = '';
+        let modelAttemptErrors = [];
+
+        // 기본 페이로드 (JSON 응답 모드)
+        const basePayload = {
             contents: [
                 {
                     role: "user",
@@ -74,62 +95,9 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
                 parts: [{ text: systemInstruction }]
             },
             generationConfig: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: "OBJECT",
-                    properties: {
-                        mealTitle: { type: "STRING", description: "식단 한 줄 요약 메인 이름 (예: 매콤 제육볶음과 찰보리밥 급식)" },
-                        totalCalories: { type: "NUMBER", description: "총 예상 칼로리 (kcal)" },
-                        nutritionScore: { type: "NUMBER", description: "영양 균형 점수 (0~100)" },
-                        macronutrients: {
-                            type: "OBJECT",
-                            properties: {
-                                carbs: { type: "NUMBER", description: "탄수화물 (g)" },
-                                protein: { type: "NUMBER", description: "단백질 (g)" },
-                                fat: { type: "NUMBER", description: "지방 (g)" },
-                                sodium: { type: "NUMBER", description: "나트륨 (mg)" },
-                                sugar: { type: "NUMBER", description: "당류 (g)" }
-                            },
-                            required: ["carbs", "protein", "fat", "sodium", "sugar"]
-                        },
-                        items: {
-                            type: "ARRAY",
-                            items: {
-                                type: "OBJECT",
-                                properties: {
-                                    name: { type: "STRING", description: "음식/메뉴 이름" },
-                                    portion: { type: "STRING", description: "추정 1회 제공량 (예: 1공기, 150g, 1대)" },
-                                    calories: { type: "NUMBER", description: "해당 음식 칼로리 (kcal)" },
-                                    category: { type: "STRING", description: "분류 (주식, 국/찌개, 메인반찬, 찬류, 후식 등)" }
-                                },
-                                required: ["name", "portion", "calories", "category"]
-                            }
-                        },
-                        aiFeedback: {
-                            type: "OBJECT",
-                            properties: {
-                                summary: { type: "STRING", description: "영양 총평 및 잘된 점" },
-                                warning: { type: "STRING", description: "주의점 및 섭취 팁 (예: 나트륨 과다 주의, 단백질 보충 권장 등)" },
-                                healthTip: { type: "STRING", description: "학생/사용자를 위한 맞춤 건강 조언" }
-                            },
-                            required: ["summary", "warning", "healthTip"]
-                        }
-                    },
-                    required: ["mealTitle", "totalCalories", "nutritionScore", "macronutrients", "items", "aiFeedback"]
-                }
+                responseMimeType: "application/json"
             }
         };
-
-        // 지원 종료/미지원 모델(gemini-2.5-flash)을 제거하고 현재 정식 호환되는 모델로 업데이트
-        const candidateModels = [
-            'gemini-1.5-flash',
-            'gemini-1.5-flash-latest',
-            'gemini-1.5-pro',
-            'gemini-2.0-flash-exp'
-        ];
-
-        let geminiRes = null;
-        let lastErrorText = '';
 
         for (const model of candidateModels) {
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -141,36 +109,41 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
                         'Content-Type': 'application/json',
                         'x-goog-api-key': apiKey
                     },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(basePayload)
                 });
 
                 if (geminiRes.ok) {
-                    break; // 성공 시 루프 탈출
+                    break; // 성공 시 탈출
                 }
 
-                lastErrorText = await geminiRes.text();
+                const errText = await geminiRes.text();
+                modelAttemptErrors.push(`[${model}] (${geminiRes.status}): ${errText}`);
+
                 // API 키 자체의 권한/인증 오류(401, 403)인 경우 모델 변경이 의미없으므로 탈출
                 if (geminiRes.status === 401 || geminiRes.status === 403) {
+                    lastErrorText = errText;
                     break;
                 }
             } catch (err) {
+                modelAttemptErrors.push(`[${model}] Network Error: ${err.message}`);
                 lastErrorText = err.message;
             }
         }
 
         if (!geminiRes || !geminiRes.ok) {
-            console.error('Gemini API Error Response:', lastErrorText);
+            console.error('Gemini API Error Log:', modelAttemptErrors);
             
             if (geminiRes?.status === 401 || geminiRes?.status === 403) {
                 return res.status(geminiRes.status).json({
                     success: false,
-                    error: `Gemini API 인증 오류 (${geminiRes.status}): Vercel 환경변수 GEMINI_API_KEY가 유효한지 확인해 주세요.`
+                    error: `Gemini API 인증 오류 (${geminiRes.status}): Vercel 환경변수 GEMINI_API_KEY가 올바른지 확인해주세요.`
                 });
             }
 
+            const errorDetails = modelAttemptErrors.length > 0 ? modelAttemptErrors[0] : lastErrorText;
             return res.status(geminiRes ? geminiRes.status : 500).json({ 
                 success: false,
-                error: `Gemini API 호출 실패: ${lastErrorText || 'Google AI 서버와 통신할 수 없습니다.'}` 
+                error: `Gemini API 호출 실패: ${errorDetails || 'Google AI 서버와 통신할 수 없습니다.'}` 
             });
         }
 
