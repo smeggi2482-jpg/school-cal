@@ -8,7 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Google Font Inter / Noto Sans KR -->
+    <!-- Google Font Noto Sans KR -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
@@ -33,6 +33,7 @@
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col antialiased">
 
+    <!-- Header -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div class="max-w-5xl mx-auto px-4 py-3.5 flex items-center justify-between">
             <div class="flex items-center space-x-3">
@@ -53,6 +54,7 @@
         </div>
     </header>
 
+    <!-- Custom Toast Notification Box -->
     <div id="toastNotification" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 hidden max-w-lg w-full px-4 transition-all duration-300">
         <div id="toastBox" class="bg-slate-900 text-white text-xs sm:text-sm font-medium px-4 py-3 rounded-xl shadow-2xl flex items-center justify-between space-x-3 border border-slate-700">
             <div class="flex items-start space-x-2.5">
@@ -137,6 +139,7 @@
                 </div>
             </div>
 
+            <!-- Result Column -->
             <div class="lg:col-span-7">
                 
                 <!-- Empty Initial State -->
@@ -180,7 +183,7 @@
                             </div>
                         </div>
 
-                        <!-- Big Calorie & Nutrients Metrics -->
+                        <!-- Calorie & Nutrients Metrics -->
                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             <div class="bg-emerald-50/60 border border-emerald-100 p-3 rounded-xl">
                                 <p class="text-xs text-emerald-700 font-medium">총 칼로리</p>
@@ -248,6 +251,7 @@
 
     </main>
 
+    <!-- School Input Modal -->
     <div id="schoolModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
             <div class="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -293,7 +297,7 @@
             document.getElementById('toastNotification').classList.add('hidden');
         }
 
-        // 이미지 고해상도 압축 함수 (해상도 800px 최적화)
+        // 이미지 고해상도 최적화 압축 (800px 해상도 제한)
         function compressAndProcessImage(file, maxWidth = 800, maxHeight = 800, quality = 0.7) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -400,7 +404,6 @@
             document.getElementById('loadingState').classList.remove('hidden');
 
             try {
-                // Vercel / Sandbox 상대 경로 안전 계산
                 let apiUrl = '/api/generate';
                 try {
                     const origin = (window.location.origin && window.location.origin !== 'null' && !window.location.origin.startsWith('blob:')) 
@@ -426,7 +429,6 @@
                     })
                 });
 
-                // 안전한 HTML/JSON 구분 처리
                 const contentType = response.headers.get('content-type') || '';
                 const rawText = await response.text();
                 let resData = null;
@@ -439,14 +441,13 @@
                     }
                 }
 
-                // 서버에서 JSON이 아닌 HTML 에러 페이지를 리턴한 경우 (e.g. 500, 404)
                 if (!resData) {
                     if (response.status === 404) {
-                        throw new Error('서버리스 API 경로를 찾을 수 없습니다 (api/generate.js 파일의 Vercel 배포 상태를 확인하세요).');
+                        throw new Error('서버리스 API 경로를 찾을 수 없습니다 (api/generate.js Vercel 배포 상태를 확인하세요).');
                     } else if (response.status === 413) {
                         throw new Error('사진 용량이 서버 수신 범위를 초과했습니다. 더 작은 해상도로 시도해 주세요.');
                     } else {
-                        throw new Error(`Vercel 서버 오류 (상태 코드: ${response.status}). Vercel 프로젝트 설정의 GEMINI_API_KEY 환경변수가 정상 등록되어 있는지 확인해주세요.`);
+                        throw new Error(`서버 응답 오류 (상태 코드: ${response.status}). Vercel 환경변수 GEMINI_API_KEY를 확인하세요.`);
                     }
                 }
 

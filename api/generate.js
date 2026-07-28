@@ -1,11 +1,10 @@
 /**
  * Vercel Serverless Function: api/generate.js
  * 
- * Vercel 배포 시 package.json 설정 여부와 상관없이 CommonJS 및 ES Module 환경
- * 모두에서 완벽히 작동하도록 호환성을 확보하였습니다.
+ * Vercel 및 Node.js 서버리스 환경 호환 handler.
+ * 최신 Gemini API 모델(gemini-2.5-flash 등) 지원 및 자동 폴백(Fallback) 탑재.
  */
 
-// Vercel 함수 용량 제한 설정 (최대 4MB 허용)
 const config = {
     api: {
         bodyParser: {
@@ -37,7 +36,7 @@ async function handler(req, res) {
     if (!apiKey) {
         return res.status(500).json({ 
             success: false,
-            error: 'Vercel 서버 환경변수(GEMINI_API_KEY)가 설정되지 않았습니다. Vercel 대시보드의 Settings > Environment Variables에서 GEMINI_API_KEY를 설정하세요.' 
+            error: 'Vercel 서버 환경변수(GEMINI_API_KEY)가 설정되지 않았습니다. Vercel 대시보드의 Settings > Environment Variables에서 GEMINI_API_KEY를 추가 후 Redeploy 해주세요.' 
         });
     }
 
@@ -121,22 +120,56 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
             }
         };
 
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        // 다중 모델 후보 목록 (404 예방을 위한 순차 폴백)
+        const candidateModels = [
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash'
+        ];
 
-        const geminiRes = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
+        let geminiRes = null;
+        let lastErrorText = '';
 
-        if (!geminiRes.ok) {
-            const errorText = await geminiRes.text();
-            console.error('Gemini API Error:', errorText);
-            return res.status(geminiRes.status).json({ 
+        for (const model of candidateModels) {
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            
+            try {
+                geminiRes = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-goog-api-key': apiKey
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (geminiRes.ok) {
+                    break; // 성공 시 루프 탈출
+                }
+
+                lastErrorText = await geminiRes.text();
+                // 404 모델 찾을 수 없음 에러가 아닐 경우 (인증 실패 401/403 등) 즉시 중단
+                if (geminiRes.status !== 404) {
+                    break;
+                }
+            } catch (err) {
+                lastErrorText = err.message;
+            }
+        }
+
+        if (!geminiRes || !geminiRes.ok) {
+            console.error('Gemini API Error Response:', lastErrorText);
+            
+            if (geminiRes?.status === 400 || geminiRes?.status === 403 || geminiRes?.status === 401) {
+                return res.status(geminiRes.status).json({
+                    success: false,
+                    error: `Gemini API 인증 오류 (${geminiRes.status}): Vercel 환경변수 GEMINI_API_KEY가 유효한지 Google AI Studio에서 확인해 주세요.`
+                });
+            }
+
+            return res.status(geminiRes ? geminiRes.status : 500).json({ 
                 success: false,
-                error: `Gemini API 오류 (${geminiRes.status}): Vercel 환경변수 GEMINI_API_KEY의 올바른 발급 및 권한 여부를 확인해주세요.` 
+                error: `Gemini API 호출 실패: ${lastErrorText || 'Google AI 서버와 통신할 수 없습니다.'}` 
             });
         }
 
@@ -144,7 +177,7 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
         const rawJsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
         if (!rawJsonText) {
-            return res.status(500).json({ success: false, error: 'AI 분석 응답 결과를 받아오지 못했습니다.' });
+            return res.status(500).json({ success: false, error: 'AI 식단 분석 응답 결과를 생성하지 못했습니다.' });
         }
 
         const parsedResult = JSON.parse(rawJsonText);
@@ -163,7 +196,6 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
     }
 }
 
-// CommonJS 및 ES Module 두 방식 모두 상호 호환 설정
 module.exports = handler;
 module.exports.default = handler;
 module.exports.config = config;
