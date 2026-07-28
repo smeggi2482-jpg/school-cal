@@ -2,7 +2,7 @@
  * Vercel Serverless Function: api/generate.js
  * 
  * Vercel 및 Node.js 서버리스 환경 호환 handler.
- * 최신 Gemini API 정식 모델 지원 및 자동 폴백(Fallback) 탑재.
+ * 동적 모델 탐색(ListModels) 및 자동 폴백(Fallback) 탑재.
  */
 
 const config = {
@@ -63,18 +63,7 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
   "aiFeedback": { "summary": "총평", "warning": "주의점", "healthTip": "건강팁" }
 }`;
 
-        // 정식 호환 모델 리스트 (존재하지 않거나 지원 중단된 모델명 완전히 제거)
-        const candidateModels = [
-            'gemini-1.5-flash',
-            'gemini-2.0-flash',
-            'gemini-1.5-pro'
-        ];
-
-        let geminiRes = null;
-        let lastErrorText = '';
-        let modelAttemptErrors = [];
-
-        // 기본 페이로드 (JSON 응답 모드)
+        // 기본 페이로드
         const basePayload = {
             contents: [
                 {
@@ -97,6 +86,49 @@ ${schoolInfo ? `[참고 정보] 학교/식단 정보: ${schoolInfo}` : ''}
                 responseMimeType: "application/json"
             }
         };
+
+        // 기본 정적 후보 모델 리스트
+        let candidateModels = [
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-2.5-pro',
+            'gemini-2.0-flash-lite',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro'
+        ];
+
+        // Google AI API에서 현재 사용자의 API Key로 호출 가능한 최신 모델 목록을 실시간 동적 조회
+        try {
+            const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+            const listRes = await fetch(listModelsUrl);
+            if (listRes.ok) {
+                const listData = await listRes.json();
+                if (listData.models && Array.isArray(listData.models)) {
+                    const validDynamicModels = listData.models
+                        .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+                        .map(m => m.name.replace(/^models\//, ''));
+
+                    if (validDynamicModels.length > 0) {
+                        // 속도와 성능이 뛰어난 모델(flash, pro 계열) 순으로 자동 정렬
+                        const priorityKeywords = ['2.5-flash', '2.0-flash', 'flash', '2.5-pro', 'pro'];
+                        validDynamicModels.sort((a, b) => {
+                            const indexA = priorityKeywords.findIndex(kw => a.includes(kw));
+                            const indexB = priorityKeywords.findIndex(kw => b.includes(kw));
+                            const rankA = indexA === -1 ? 99 : indexA;
+                            const rankB = indexB === -1 ? 99 : indexB;
+                            return rankA - rankB;
+                        });
+                        candidateModels = Array.from(new Set([...validDynamicModels, ...candidateModels]));
+                    }
+                }
+            }
+        } catch (listErr) {
+            console.warn('동적 모델 목록 조회 실패, 기본 후보군 사용:', listErr.message);
+        }
+
+        let geminiRes = null;
+        let lastErrorText = '';
+        let modelAttemptErrors = [];
 
         for (const model of candidateModels) {
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
